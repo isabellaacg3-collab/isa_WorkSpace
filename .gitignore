@@ -1,0 +1,33 @@
+# IDE metadata
+/.idea/
+/*.iml
+/.vscode/
+/.settings/
+/.project
+/.classpath
+
+# Local build output and downloaded dependencies
+/out/
+/build/
+/bin/
+/dist/
+/target/
+/lib/
+/jdk/
+/javafx/
+*.class
+*.jar
+
+# Workspace data, test databases and SQLite sidecar files
+*.[dD][bB]
+*.[dD][bB]-*
+*.[sS][qQ][lL][iI][tT][eE]
+*.[sS][qQ][lL][iI][tT][eE]-*
+*.[sS][qQ][lL][iI][tT][eE]3
+*.[sS][qQ][lL][iI][tT][eE]3-*
+/workspaces.txt
+/workspace-data.txt
+/workspace-all.txt
+
+.DS_Store
+Thumbs.db
