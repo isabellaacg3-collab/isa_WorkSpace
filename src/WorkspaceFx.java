@@ -173,7 +173,8 @@ public class WorkspaceFx extends Application {
         };
         MenuItem fileItem = new MenuItem("文件");
         MenuItem directoryItem = new MenuItem("目录");
-        MenuButton chooseButton = new MenuButton("添加资源", null, fileItem, directoryItem);
+        MenuItem pathItem = new MenuItem("粘贴完整路径");
+        MenuButton chooseButton = new MenuButton("添加资源", null, fileItem, directoryItem, pathItem);
         chooseButton.disableProperty().bind(
                 workspaceList.getSelectionModel().selectedItemProperty().isNull()
         );
@@ -192,6 +193,34 @@ public class WorkspaceFx extends Application {
             if (selected != null) {
                 registerPath.accept(selected.toPath());
             }
+        });
+
+        pathItem.setOnAction(event -> {
+            TextInputDialog dialog = new TextInputDialog();
+            dialog.initOwner(stage);
+            dialog.setTitle("粘贴完整路径");
+            dialog.setHeaderText("可粘贴文件、目录或 .lnk 快捷方式的完整路径");
+            dialog.setContentText("路径：");
+
+            dialog.showAndWait().ifPresent(text -> {
+                String input = text.strip();
+                if (input.length() >= 2 && input.startsWith("\"") && input.endsWith("\"")) {
+                    input = input.substring(1, input.length() - 1);
+                }
+
+                try {
+                    Path path = Path.of(input);
+                    if (!path.isAbsolute()) {
+                        label.setText("请输入完整路径");
+                    } else if (!Files.exists(path)) {
+                        label.setText("路径不存在或无法访问：" + path);
+                    } else {
+                        registerPath.accept(path);
+                    }
+                } catch (InvalidPathException exception) {
+                    label.setText("路径格式无效：" + exception.getInput());
+                }
+            });
         });
 
         Button createButton = new Button("新建工作区");
