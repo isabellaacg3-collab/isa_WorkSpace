@@ -52,7 +52,19 @@ public class Asset {
 
         Desktop.getDesktop().open(file.toFile());
     }
+    public void locate(Path root) throws IOException {
+        if (!this.exists(root)) {
+            throw new IOException("路径不存在或无法确认其存在");
+        }
 
+        Path file = resolvePath(root).toAbsolutePath().normalize();
+
+        if(file.getParent() == null){
+            throw new IOException("此路径没有可供定位的上一级目录");
+        }
+
+        new ProcessBuilder("explorer.exe", "/select,", file.toString()).start();
+    }
     private static void openWindowsShortcut(Path shortcut) throws IOException {
         String systemRoot = System.getenv("SystemRoot");
         if (systemRoot == null || systemRoot.isBlank()) {
@@ -83,7 +95,6 @@ public class Asset {
             throw new IOException("打开快捷方式时被中断：" + shortcut, exception);
         }
     }
-
     public Path resolvePath(Path root) {
         Path storedPath = Path.of(this.path);
 

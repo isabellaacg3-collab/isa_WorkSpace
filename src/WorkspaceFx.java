@@ -131,10 +131,6 @@ public class WorkspaceFx extends Application {
             }
         });
 
-        HBox lists = new HBox(12,
-                new VBox(6, new Label("工作区"), workspaceList, deleteWorkspaceButton),
-                new VBox(6, new Label("资源"), assetList));
-
         Consumer<Path> registerPath = chosenPath -> {
             Path selectedPath = chosenPath.toAbsolutePath().normalize();
             Path root = databaseFile.getParent().normalize();
@@ -172,8 +168,8 @@ public class WorkspaceFx extends Application {
             }
         };
         MenuItem fileItem = new MenuItem("文件");
-        MenuItem directoryItem = new MenuItem("目录");
-        MenuItem pathItem = new MenuItem("粘贴完整路径");
+        MenuItem directoryItem = new MenuItem("文件夹");
+        MenuItem pathItem = new MenuItem("完整路径");
         MenuButton chooseButton = new MenuButton("添加资源", null, fileItem, directoryItem, pathItem);
         chooseButton.disableProperty().bind(
                 workspaceList.getSelectionModel().selectedItemProperty().isNull()
@@ -188,17 +184,16 @@ public class WorkspaceFx extends Application {
         });
         directoryItem.setOnAction(event -> {
             DirectoryChooser chooser = new DirectoryChooser();
-            chooser.setTitle("选择目录");
+            chooser.setTitle("选择文件夹");
             File selected = chooser.showDialog(stage);
             if (selected != null) {
                 registerPath.accept(selected.toPath());
             }
         });
-
         pathItem.setOnAction(event -> {
             TextInputDialog dialog = new TextInputDialog();
             dialog.initOwner(stage);
-            dialog.setTitle("粘贴完整路径");
+            dialog.setTitle("完整路径");
             dialog.setHeaderText("可粘贴文件、目录或 .lnk 快捷方式的完整路径");
             dialog.setContentText("路径：");
 
@@ -255,6 +250,87 @@ public class WorkspaceFx extends Application {
             });
         });
 
+        Button renameButton = new Button("重命名工作区");
+        renameButton.disableProperty().bind(
+                workspaceList.getSelectionModel().selectedItemProperty().isNull()
+        );
+        renameButton.setOnAction(event -> {
+            String oldName = workspaceList.getSelectionModel().getSelectedItem();
+            int selectedIndex = workspaceList.getSelectionModel().getSelectedIndex();
+
+            TextInputDialog dialog = new TextInputDialog(oldName);
+            dialog.initOwner(stage);
+            dialog.setTitle("重命名工作区");
+            dialog.setHeaderText(null);
+            dialog.setContentText("名称");
+
+            dialog.showAndWait().ifPresent(text -> {
+                String newName = text.strip();
+                if (newName.isEmpty()) {
+                    label.setText("工作区名称不可为空");
+                    return;
+                }
+                if (newName.equals(oldName)) {
+                    label.setText("名称重复");
+                    return;
+                }
+                if (workspaceList.getItems().contains(newName)) {
+                    label.setText("工作区已存在");
+                    return;
+                }
+
+                try {
+                    int workspaceId = database.findWorkspaceId(oldName);
+                    if (database.renameWorkspace(workspaceId, newName) == 0) {
+                        label.setText("找不到要重命名的工作区");
+                        return;
+                    }
+
+                    workspaceList.getSelectionModel().clearSelection();
+                    workspaceList.getItems().set(selectedIndex, newName);
+                    workspaceList.getSelectionModel().select(selectedIndex);
+                    label.setText("已重命名 " + newName);
+                } catch (SQLException exception) {
+                    label.setText("重命名失败：" + exception.getMessage());
+                }
+            });
+        });
+
+        Button renameAssetButton = new Button("重命名资源");
+        renameAssetButton.disableProperty().bind(
+                assetList.getSelectionModel().selectedItemProperty().isNull()
+        );
+        renameAssetButton.setOnAction(event -> {
+            Asset asset = assetList.getSelectionModel().getSelectedItem();
+            TextInputDialog dialog = new TextInputDialog(asset.getName());
+
+            dialog.initOwner(stage);
+            dialog.setTitle("重命名资源");
+            dialog.setHeaderText(null);
+            dialog.setContentText("名称");
+
+            dialog.showAndWait().ifPresent(text -> {
+                String newName = text.strip();
+                if (newName.isEmpty()) {
+                    label.setText("资源名称不可为空");
+                    return;
+                }
+
+                try {
+                    int assetId = database.findAssetId(asset.getPath());
+                    if (database.renameAsset(assetId, newName) == 1) {
+                        asset.setName(newName);
+                        assetList.refresh();
+                        label.setText("已重命名 " + newName);
+                    } else {
+                        label.setText("找不到要重命名的资源");
+                    }
+                } catch (SQLException exception) {
+                    label.setText("重命名失败：" + exception.getMessage());
+                }
+            });
+        });
+
         Button removeButton = new Button("移除关联");
         removeButton.disableProperty().bind(
                 assetList.getSelectionModel().selectedItemProperty().isNull()
@@ -278,12 +354,99 @@ public class WorkspaceFx extends Application {
             }
         });
 
-        HBox actions = new HBox(12, button, createButton, chooseButton, openButton, removeButton);
-        actions.setAlignment(Pos.CENTER);
+        Button locateButton = new Button("打开所在目录");
+        locateButton.disableProperty().bind(
+                assetList.getSelectionModel().selectedItemProperty().isNull()
+        );
+        locateButton.setOnAction(event -> {
+            Asset asset = assetList.getSelectionModel().getSelectedItem();
 
-        VBox root = new VBox(12, actions, lists, label);
+            try {
+                asset.locate(databaseFile.getParent());
+                label.setText("已请求定位" + asset.getName());
+            } catch (IOException | InvalidPathException exception) {
+                label.setText("定位失败：" + exception.getMessage());
+            }
+        });
+
+        Label previewLabel = new Label("请选择资源");
+        previewLabel.setWrapText(true);
+        ListView<String> directoryList = new ListView<>();
+        directoryList.setPrefHeight(120);
+        directoryList.setMaxHeight(120);
+        directoryList.setMinHeight(0);
+        directoryList.setVisible(false);
+        directoryList.managedProperty().bind(directoryList.visibleProperty());
+        VBox previewPane = new VBox(6, new Label("预览"), previewLabel, directoryList);
+        previewPane.setPrefWidth(320);
+        assetList.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldAsset, selectedAsset) -> {
+                    directoryList.getItems().clear();
+                    directoryList.setVisible(false);
+
+                    if (selectedAsset == null) {
+                        previewLabel.setText("请选择资源");
+                        return;
+                    }
+                    Path path = selectedAsset.resolvePath(databaseFile.getParent()).toAbsolutePath().normalize();
+                    if(!Files.exists(path)){
+                        previewLabel.setText("路径不存在或无法访问");
+                    } else if (Files.isDirectory(path)) {
+                        previewLabel.setText("名称：" + selectedAsset.getName()
+                                + "\n路径：" + path
+                                + "\n类型：文件夹");
+
+                        directoryList.setVisible(true);
+                        directoryList.setPlaceholder(new Label("空文件夹"));
+
+                        try (var children = Files.list(path)) {
+                            directoryList.getItems().setAll(
+                                    children.map(entry -> entry.getFileName().toString()).toList()
+                            );
+                        } catch (IOException | java.io.UncheckedIOException exception) {
+                            directoryList.setPlaceholder(new Label("无法读取目录内容"));
+                        }
+                    }else {
+                        String fileName = path.getFileName().toString();
+                        String type = "文件";
+                        int dot = fileName.lastIndexOf('.');
+                        if(dot > 0 && dot < fileName.length() - 1){
+                            type = fileName.substring(dot);
+                        }
+                        previewLabel.setText("名称：" + selectedAsset.getName()
+                                + "\n路径：" + path
+                                + "\n类型：" + type
+                        );
+                    }
+                });
+
+        HBox actionsUp = new HBox(12,
+                button,
+                createButton,
+                renameButton,
+                deleteWorkspaceButton
+        );
+        actionsUp.setAlignment(Pos.CENTER_LEFT);
+
+
+        HBox actionsDown = new HBox(12,
+                chooseButton,
+                openButton,
+                locateButton,
+                renameAssetButton,
+                removeButton
+        );
+        actionsDown.setAlignment(Pos.CENTER_LEFT);
+
+        HBox lists = new HBox(12,
+                new VBox(6, new Label("工作区"), workspaceList),
+                new VBox(6, new Label("资源"), assetList),
+                previewPane
+        );
+
+        VBox root = new VBox(12, actionsUp, lists, actionsDown,label);
         root.setAlignment(Pos.CENTER);
-        Scene scene = new Scene(root, 480, 340);
+        Scene scene = new Scene(root, 854, 480);
 
         stage.setTitle("isa Workspace");
         stage.setScene(scene);

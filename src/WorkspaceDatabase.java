@@ -216,6 +216,21 @@ public class WorkspaceDatabase {
             return update.executeUpdate();
         }
     }
+    public int renameWorkspace(int workspaceID,String newName) throws SQLException{
+        String sql = """
+            UPDATE workspaces
+            SET name = ?
+            WHERE id = ?;
+            """;
+
+        try (Connection connection = openConnection();
+             PreparedStatement update = connection.prepareStatement(sql)) {
+            update.setString(1,newName);
+            update.setInt(2,workspaceID);
+
+            return update.executeUpdate();
+        }
+    }
     public int saveAsset(Connection connection, String name, String path) throws SQLException {
         String sql = """
             INSERT INTO assets (name, path)
