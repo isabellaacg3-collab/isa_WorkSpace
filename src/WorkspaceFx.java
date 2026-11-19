@@ -24,6 +24,8 @@ import java.util.function.Consumer;
 import java.net.URISyntaxException;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
+import javafx.scene.layout.Priority;
+import javafx.beans.binding.Bindings;
 
 public class WorkspaceFx extends Application {
     @Override
@@ -42,7 +44,9 @@ public class WorkspaceFx extends Application {
             }
 
             try {
+                database.initialize();
                 List<String> names = database.findWorkspaceNames();
+
                 String previousName = workspaceList.getSelectionModel().getSelectedItem();
 
                 workspaceList.getSelectionModel().clearSelection();
@@ -60,7 +64,9 @@ public class WorkspaceFx extends Application {
         });
 
         ListView<Asset> assetList = new ListView<>();
-        assetList.setPrefHeight(180);
+        assetList.setMinHeight(0);
+        assetList.setPrefHeight(0);
+        VBox.setVgrow(assetList, Priority.ALWAYS);
         assetList.setCellFactory(list -> new ListCell<Asset>() {
             @Override
             protected void updateItem(Asset asset, boolean empty) {
@@ -69,9 +75,26 @@ public class WorkspaceFx extends Application {
             }
         });
 
+        ListView<Asset> boundFolderList = new ListView<>();
+
+        boundFolderList.setCellFactory(list -> {
+            ListCell<Asset> cell = assetList.getCellFactory().call(list);
+            cell.setPrefWidth(0);
+            return cell;
+        });
+
+        boundFolderList.setPlaceholder(new Label("未绑定目录"));
+        boundFolderList.setPrefWidth(0);
+
+        boundFolderList.setFixedCellSize(20);
+        boundFolderList.setMinHeight(24);
+        boundFolderList.setPrefHeight(24);
+        boundFolderList.setMaxHeight(24);
+
         workspaceList.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldName, selectedName) -> {
                     assetList.getItems().clear();
+                    boundFolderList.getItems().clear();
                     if (selectedName == null) {
                         return;
                     }
@@ -79,6 +102,10 @@ public class WorkspaceFx extends Application {
                     try {
                         int workspaceId = database.findWorkspaceId(selectedName);
                         assetList.getItems().setAll(database.findWorkspaceAssets(workspaceId));
+                        Asset boundAsset = database.findBoundAsset(workspaceId);
+                        if (boundAsset != null) {
+                            boundFolderList.getItems().setAll(boundAsset);
+                        }
                         int assetCount = assetList.getItems().size();
 
                         label.setText(selectedName + " 有 " + assetCount + " 项资源");
@@ -379,52 +406,133 @@ public class WorkspaceFx extends Application {
         directoryList.managedProperty().bind(directoryList.visibleProperty());
         VBox previewPane = new VBox(6, new Label("预览"), previewLabel, directoryList);
         previewPane.setPrefWidth(320);
+        Consumer<Asset> showPreview = selectedAsset -> {
+            directoryList.getItems().clear();
+            directoryList.setVisible(false);
+
+            if (selectedAsset == null) {
+                previewLabel.setText("请选择资源");
+                return;
+            }
+            Path path = selectedAsset.resolvePath(databaseFile.getParent()).toAbsolutePath().normalize();
+            if(!Files.exists(path)){
+                previewLabel.setText("路径不存在或无法访问");
+            } else if (Files.isDirectory(path)) {
+                previewLabel.setText("名称：" + selectedAsset.getName()
+                        + "\n路径：" + path
+                        + "\n类型：文件夹");
+
+                directoryList.setVisible(true);
+                directoryList.setPlaceholder(new Label("空文件夹"));
+
+                try (var children = Files.list(path)) {
+                    directoryList.getItems().setAll(
+                            children.map(entry -> entry.getFileName().toString()).toList()
+                    );
+                } catch (IOException | java.io.UncheckedIOException exception) {
+                    directoryList.setPlaceholder(new Label("无法读取目录内容"));
+                }
+            }else {
+                String fileName = path.getFileName().toString();
+                String type = "文件";
+                int dot = fileName.lastIndexOf('.');
+                if(dot > 0 && dot < fileName.length() - 1){
+                    type = fileName.substring(dot);
+                }
+                previewLabel.setText("名称：" + selectedAsset.getName()
+                        + "\n路径：" + path
+                        + "\n类型：" + type
+                );
+            }
+        };
+
         assetList.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldAsset, selectedAsset) -> {
-                    directoryList.getItems().clear();
-                    directoryList.setVisible(false);
-
-                    if (selectedAsset == null) {
-                        previewLabel.setText("请选择资源");
-                        return;
+                    if (selectedAsset != null) {
+                        boundFolderList.getSelectionModel().clearSelection();
                     }
-                    Path path = selectedAsset.resolvePath(databaseFile.getParent()).toAbsolutePath().normalize();
-                    if(!Files.exists(path)){
-                        previewLabel.setText("路径不存在或无法访问");
-                    } else if (Files.isDirectory(path)) {
-                        previewLabel.setText("名称：" + selectedAsset.getName()
-                                + "\n路径：" + path
-                                + "\n类型：文件夹");
-
-                        directoryList.setVisible(true);
-                        directoryList.setPlaceholder(new Label("空文件夹"));
-
-                        try (var children = Files.list(path)) {
-                            directoryList.getItems().setAll(
-                                    children.map(entry -> entry.getFileName().toString()).toList()
-                            );
-                        } catch (IOException | java.io.UncheckedIOException exception) {
-                            directoryList.setPlaceholder(new Label("无法读取目录内容"));
-                        }
-                    }else {
-                        String fileName = path.getFileName().toString();
-                        String type = "文件";
-                        int dot = fileName.lastIndexOf('.');
-                        if(dot > 0 && dot < fileName.length() - 1){
-                            type = fileName.substring(dot);
-                        }
-                        previewLabel.setText("名称：" + selectedAsset.getName()
-                                + "\n路径：" + path
-                                + "\n类型：" + type
-                        );
-                    }
+                    showPreview.accept(selectedAsset);
                 });
+
+        boundFolderList.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldAsset, selectedAsset) -> {
+                    if (selectedAsset != null) {
+                        assetList.getSelectionModel().clearSelection();
+                    }
+                    showPreview.accept(selectedAsset);
+                });
+
+        Button openAgentButton = new Button("启动全局Agent");
+        openAgentButton.setOnAction(event -> {
+            Path scriptPath = findAgentScript(databaseFile.getParent());
+            if(scriptPath != null){
+                label.setText("已找到： " + scriptPath.toString());
+                try {
+                    startAgent(scriptPath, scriptPath.getParent());
+                    label.setText("已请求启动全局 Agent");
+                } catch (IOException exception) {
+                    label.setText("启动失败：" + exception.getMessage());
+                }
+            }else{
+                label.setText("未找到启动项");
+            }
+        });
+
+        Button openBoundAgentButton = new Button("从绑定工作区启动Agent");
+        openBoundAgentButton.disableProperty().bind(
+                Bindings.isEmpty(boundFolderList.getItems())
+        );
+        openBoundAgentButton.setOnAction(event -> {
+            Asset boundAsset = boundFolderList.getItems().get(0);
+
+            try {
+                Path scriptPath = findAgentScript(databaseFile.getParent());
+                Path workDir = boundAsset.resolvePath(databaseFile.getParent());
+
+                startAgent(scriptPath, workDir);
+                label.setText("已请求启动 Agent：" + boundAsset.getName());
+            } catch (IOException | InvalidPathException exception) {
+                label.setText("启动失败：" + exception.getMessage());
+            }
+        });
+
+        Button openResourceAgentButton = new Button("从选中资源启动Agent");
+        openResourceAgentButton.disableProperty().bind(
+                Bindings.createBooleanBinding(() -> {
+                    Asset asset = assetList.getSelectionModel().getSelectedItem();
+                    if (asset == null) {
+                        return true;
+                    }
+
+                    try {
+                        Path path = asset.resolvePath(databaseFile.getParent());
+                        return !Files.isDirectory(path);
+                    } catch (InvalidPathException exception) {
+                        return true;
+                    }
+                }, assetList.getSelectionModel().selectedItemProperty())
+        );
+        openResourceAgentButton.setOnAction(event -> {
+            Asset asset = assetList.getSelectionModel().getSelectedItem();
+
+            try {
+                Path scriptPath = findAgentScript(databaseFile.getParent());
+                Path workDir = asset.resolvePath(databaseFile.getParent());
+
+                startAgent(scriptPath, workDir);
+                label.setText("已请求启动 Agent：" + asset.getName());
+            } catch (IOException | InvalidPathException exception) {
+                label.setText("启动失败：" + exception.getMessage());
+            }
+        });
 
         HBox actionsUp = new HBox(12,
                 button,
                 createButton,
                 renameButton,
-                deleteWorkspaceButton
+                deleteWorkspaceButton,
+                openAgentButton,
+                openBoundAgentButton
         );
         actionsUp.setAlignment(Pos.CENTER_LEFT);
 
@@ -434,13 +542,143 @@ public class WorkspaceFx extends Application {
                 openButton,
                 locateButton,
                 renameAssetButton,
-                removeButton
+                removeButton,
+                openResourceAgentButton
         );
         actionsDown.setAlignment(Pos.CENTER_LEFT);
 
+        //绑定工作区
+        MenuItem chooseBoundFolderItem = new MenuItem("指定目录");
+        MenuItem openBoundFolderItem = new MenuItem("打开");
+        MenuItem renameBoundFolderItem = new MenuItem("重命名");
+        MenuItem unbindFolderItem = new MenuItem("解除绑定");
+
+        openBoundFolderItem.disableProperty().bind(
+                Bindings.isEmpty(boundFolderList.getItems())
+        );
+        openBoundFolderItem.setOnAction(event -> {
+            Asset boundAsset = boundFolderList.getItems().get(0);
+
+            try {
+                boundAsset.open(databaseFile.getParent());
+                label.setText("已打开 " + boundAsset.getName());
+            } catch (IOException | InvalidPathException exception) {
+                label.setText("打开失败：" + exception.getMessage());
+            }
+        });
+
+        renameBoundFolderItem.disableProperty().bind(
+                Bindings.isEmpty(boundFolderList.getItems())
+        );
+        renameBoundFolderItem.setOnAction(event -> {
+            Asset asset = boundFolderList.getItems().get(0);
+            TextInputDialog dialog = new TextInputDialog(asset.getName());
+
+            dialog.initOwner(stage);
+            dialog.setTitle("重命名绑定目录");
+            dialog.setHeaderText(null);
+            dialog.setContentText("名称");
+
+            dialog.showAndWait().ifPresent(text -> {
+                String newName = text.strip();
+                if (newName.isEmpty()) {
+                    label.setText("目录名称不可为空");
+                    return;
+                }
+
+                try {
+                    int assetId = database.findAssetId(asset.getPath());
+                    if (database.renameAsset(assetId, newName) == 1) {
+                        button.fire();
+                        label.setText("已重命名 " + newName);
+                    } else {
+                        label.setText("找不到要重命名的目录");
+                    }
+                } catch (SQLException exception) {
+                    label.setText("重命名失败：" + exception.getMessage());
+                }
+            });
+        });
+
+        unbindFolderItem.disableProperty().bind(
+                Bindings.isEmpty(boundFolderList.getItems())
+        );
+        unbindFolderItem.setOnAction(event -> {
+            String workspaceName =
+                    workspaceList.getSelectionModel().getSelectedItem();
+
+            try {
+                int workspaceId = database.findWorkspaceId(workspaceName);
+                database.unbindFolder(workspaceId);
+
+                button.fire();
+                label.setText("已解除绑定");
+            } catch (SQLException exception) {
+                label.setText("解除绑定失败：" + exception.getMessage());
+            }
+        });
+
+        MenuButton boundFolderMenu = new MenuButton(
+                "操作", null,
+                chooseBoundFolderItem,
+                openBoundFolderItem,
+                renameBoundFolderItem,
+                unbindFolderItem
+        );
+
+        chooseBoundFolderItem.disableProperty().bind(
+                workspaceList.getSelectionModel().selectedItemProperty().isNull()
+        );
+        chooseBoundFolderItem.setOnAction(event -> {
+            String workspaceName = workspaceList.getSelectionModel().getSelectedItem();
+
+            DirectoryChooser chooser = new DirectoryChooser();
+            chooser.setTitle("指定绑定目录");
+            File selected = chooser.showDialog(stage);
+
+            if (selected == null) {
+                return;
+            }
+
+            Path selectedPath = selected.toPath().toAbsolutePath().normalize();
+            if (!Files.isDirectory(selectedPath)) {
+                label.setText("请选择一个可访问的文件夹");
+                return;
+            }
+
+            Path rootPath = databaseFile.getParent().normalize();
+            Path sharedRoot = rootPath.resolve("..").normalize();
+
+            String storedPath = selectedPath.startsWith(sharedRoot)
+                    ? rootPath.relativize(selectedPath).toString()
+                    : selectedPath.toString();
+
+            if (storedPath.isEmpty()) {
+                storedPath = ".";
+            }
+
+            Path fileName = selectedPath.getFileName();
+            String assetName = fileName == null
+                    ? selectedPath.toString()
+                    : fileName.toString();
+
+            try {
+                database.bindFolder(workspaceName, assetName, storedPath);
+                button.fire();
+                label.setText("已绑定目录：" + selectedPath);
+            } catch (SQLException exception) {
+                label.setText("绑定失败：" + exception.getMessage());
+            }
+        });
+
+        HBox boundFolderRow = new HBox(6, boundFolderList, boundFolderMenu);
+        boundFolderRow.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(boundFolderList, Priority.ALWAYS);
+
+        VBox resourceColumn = new VBox(6, new Label("绑定工作区"),boundFolderRow, new Label("资源"), assetList);
         HBox lists = new HBox(12,
                 new VBox(6, new Label("工作区"), workspaceList),
-                new VBox(6, new Label("资源"), assetList),
+                resourceColumn,
                 previewPane
         );
 
@@ -466,6 +704,44 @@ public class WorkspaceFx extends Application {
         }
 
         return Path.of(".").toAbsolutePath().normalize();
+    }
+    private static Path findAgentScript(Path startDir){
+        Path currentPath = startDir;
+        while (currentPath != null){
+            Path candidate = currentPath.resolve("启动全局Agent.cmd");
+            if(Files.isRegularFile(candidate)){
+                return candidate;
+            }
+            currentPath = currentPath.getParent();
+        }
+        return null;
+    }
+    private static void startAgent(Path scriptPath, Path workDir) throws IOException {
+
+        if (scriptPath == null || !Files.isRegularFile(scriptPath)) {
+            throw new IOException("找不到 Agent 启动脚本");
+        }
+
+        Path directory = workDir.toAbsolutePath().normalize();
+        if (!Files.isDirectory(directory)) {
+            throw new IOException("工作目录不存在或无法访问");
+        }
+
+        ProcessBuilder launcher = new ProcessBuilder(
+                "powershell.exe", "-NoProfile", "-NonInteractive",
+                "-WindowStyle", "Hidden", "-Command",
+                "Start-Process -FilePath $env:IWS_AGENT_LAUNCHER -ErrorAction Stop"
+        );
+
+        launcher.environment().put(
+                "IWS_AGENT_LAUNCHER", scriptPath.toAbsolutePath().toString()
+        );
+        launcher.environment().put(
+                "IWS_AGENT_WORKDIR", directory.toString()
+        );
+
+        launcher.redirectError(ProcessBuilder.Redirect.INHERIT);
+        launcher.start();
     }
     public static void main(String[] args) {
         launch(args);

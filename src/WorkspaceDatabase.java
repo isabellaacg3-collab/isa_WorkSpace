@@ -83,6 +83,14 @@ public class WorkspaceDatabase {
                 FOREIGN KEY (asset_id) REFERENCES assets(id)
             );
             """;
+        String createBindingsSql = """
+            CREATE TABLE IF NOT EXISTS workspace_bindings (
+                workspace_id INTEGER PRIMARY KEY,
+                asset_id INTEGER NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                FOREIGN KEY (asset_id) REFERENCES assets(id)
+            );
+            """;
 
         try (Connection connection = openConnection();
              Statement statement = connection.createStatement()) {
@@ -90,6 +98,7 @@ public class WorkspaceDatabase {
             statement.executeUpdate(assetSql);
             statement.executeUpdate(createWorkspacesSql);
             statement.executeUpdate(createLinksSql);
+            statement.executeUpdate(createBindingsSql);
         }
     }
     public int addWorkspace(String name) throws SQLException {
@@ -201,6 +210,30 @@ public class WorkspaceDatabase {
 
         return names;
     }
+    public Asset findBoundAsset(int workspaceId) throws SQLException {
+        String sql = """
+            SELECT assets.name, assets.path
+            FROM assets
+            JOIN workspace_bindings ON assets.id = workspace_bindings.asset_id
+            WHERE workspace_bindings.workspace_id = ?;
+            """;
+
+        try (Connection connection = openConnection();
+             PreparedStatement query = connection.prepareStatement(sql)) {
+
+            query.setInt(1, workspaceId);
+
+            try (ResultSet result = query.executeQuery()) {
+                if (result.next()) {
+                    String name = result.getString("name");
+                    String path = result.getString("path");
+                    return new Asset(name, path);
+                }
+            }
+        }
+
+        return null;
+    }
     public int renameAsset(int assetId, String newName) throws SQLException {
         String sql = """
             UPDATE assets
@@ -275,6 +308,52 @@ public class WorkspaceDatabase {
                 connection.rollback();
                 throw exception;
             }
+        }
+    }
+    public int bindFolder(String workspaceName, String name, String path) throws SQLException {
+
+        String sql = """
+            INSERT INTO workspace_bindings (workspace_id, asset_id)
+            VALUES (?, ?)
+            ON CONFLICT(workspace_id) DO UPDATE
+            SET asset_id = excluded.asset_id;
+            """;
+
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+
+            try {
+                int workspaceId = findWorkspaceId(connection, workspaceName);
+
+                addAsset(connection, name, path);
+                int assetId = findAssetId(connection, path);
+
+                int changedRows;
+                try (PreparedStatement save = connection.prepareStatement(sql)) {
+                    save.setInt(1, workspaceId);
+                    save.setInt(2, assetId);
+                    changedRows = save.executeUpdate();
+                }
+
+                connection.commit();
+                return changedRows;
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
+    }
+    public int unbindFolder(int workspaceId) throws SQLException {
+        String sql = """
+            DELETE FROM workspace_bindings
+            WHERE workspace_id = ?;
+            """;
+
+        try (Connection connection = openConnection();
+             PreparedStatement delete = connection.prepareStatement(sql)) {
+
+            delete.setInt(1, workspaceId);
+            return delete.executeUpdate();
         }
     }
     public int deleteWorkspace(String name) throws SQLException {
